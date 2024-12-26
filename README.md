@@ -1,5 +1,6 @@
-Mini Bone Tool 사용자 메뉴얼
+![image](https://github.com/user-attachments/assets/79f602cb-c05e-44e7-a3e6-1721c33fa423)
 
+Mini Bone Tool 사용자 메뉴얼
 
 Mesh에 간단한 리깅 작업을 할 수 있는 Mini Bone Tool 사용 방법을 안내합니다.
 
