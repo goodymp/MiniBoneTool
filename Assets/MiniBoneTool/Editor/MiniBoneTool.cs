@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+Ôªøusing System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using System.IO;
@@ -16,67 +16,128 @@ public class MiniBoneTool : EditorWindow
     private SerializedObject serializedObjectRef;
 
     private float gizmoSize = 2.0f;
-
     private bool gizmoHidden = false;
-
     private bool wireframeMode = false;
 
+    private bool editMode = false;
+
     private Vector2 scrollPosition;
+    private Texture2D logoTexture;
 
-    private Texture2D logoTexture; // ∑Œ∞Ì ≈ÿΩ∫√≥
-
-    // UI¿« ∞°∑Œ ≈©±‚∏¶ º≥¡§«œ¥¬ ∫Øºˆ
-    private static float windowWidth = 400f; // ±‚∫ª∞™: 400px
-
+    private static float windowWidth = 400f;
     private float timer = 0f;
 
     [MenuItem("Tools/Mini Bone Tool")]
     public static void ShowWindow()
     {
         var window = GetWindow<MiniBoneTool>($"Mini Bone Tool (Ver {ver})");
-        window.minSize = new Vector2(windowWidth, 300f); // √÷º“ ≈©±‚ º≥¡§
-        window.maxSize = new Vector2(windowWidth, 1000f); // √÷¥Î ≈©±‚ º≥¡§
-
+        window.minSize = new Vector2(windowWidth, 300f);
+        window.maxSize = new Vector2(windowWidth, 1000f);
     }
 
     private void OnEnable()
     {
         serializedObjectRef = new SerializedObject(this);
-
-        // EditorApplication.update += OnGUI;
-
         EditorApplication.update += OnEditorUpdate;
+
+        SceneView.duringSceneGui += OnSceneGUI;
 
         LoadLogoTexture();
     }
 
-
-
     private void OnDisable()
     {
+        Tools.hidden = false;
+        SceneView.duringSceneGui -= OnSceneGUI;
+
+        if (editMode)
+        {
+            editMode = false;
+            ToggleEditMode(false);
+        }
+
         EditorApplication.update -= OnEditorUpdate;
-
         HideWireframe();
-
         RemoveGizmoDrawer();
     }
-
 
     private void OnEditorUpdate()
     {
         timer += Time.deltaTime;
-        if (timer >= 0.25f) 
+        if (timer >= 0.25f)
         {
-            Repaint(); // GUI ∞ªΩ≈
-
+            Repaint();
             timer = 0f;
         }
     }
 
+    private void OnSceneGUI(SceneView sceneView)
+    {
+        if (editMode && meshObject != null && Selection.activeGameObject == meshObject)
+        {
+            Tools.hidden = true;
+        }
+        else
+        {
+            Tools.hidden = false;
+        }
+
+        if (!editMode || boneObjects == null || boneObjects.Count == 0) return;
+
+        // [ÌïµÏã¨ Î≤ÑÍ∑∏ ÏàòÏ†ï] Alt ÌÇ§Î•º ÎàÑÎ•¥ÏßÄ ÏïäÏùÄ ÏàúÏàò Ï¢åÌÅ¥Î¶≠Ïùº ÎïåÎßå Ï≤òÎ¶¨
+        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && !Event.current.alt)
+        {
+            Ray ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
+            float closestDist = float.MaxValue;
+            GameObject hitObject = null;
+
+            foreach (var bd in boneObjects)
+            {
+                if (bd.bone == null) continue;
+
+                float distCam = Vector3.Distance(sceneView.camera.transform.position, bd.bone.position);
+                float clickRadius = 0.035f * distCam;
+                float distToRay = Vector3.Cross(ray.direction, bd.bone.position - ray.origin).magnitude;
+
+                if (distToRay < clickRadius && distToRay < closestDist)
+                {
+                    closestDist = distToRay;
+                    hitObject = bd.bone.gameObject;
+                }
+
+                foreach (Transform child in bd.bone)
+                {
+                    if (child.name.StartsWith("HelperNode"))
+                    {
+                        float hDistCam = Vector3.Distance(sceneView.camera.transform.position, child.position);
+                        float hClickRadius = 0.03f * hDistCam;
+                        float hDistToRay = Vector3.Cross(ray.direction, child.position - ray.origin).magnitude;
+
+                        if (hDistToRay < hClickRadius && hDistToRay < closestDist)
+                        {
+                            closestDist = hDistToRay;
+                            hitObject = child.gameObject;
+                        }
+                    }
+                }
+            }
+
+            if (hitObject != null)
+            {
+                // [Ìï¥Í≤∞ Î∂ÄÎ∂Ñ] ÌÅ¥Î¶≠Ìïú Î≥∏Ïù¥ "ÌòÑÏû¨ Ïù¥ÎØ∏ ÏÑ†ÌÉùÎêú Î≥∏"Ïù¥ ÏïÑÎãê ÎïåÎßå ÌÅ¥Î¶≠ Ïù¥Î≤§Ìä∏Î•º ÏÜåÎ™®Ìï®.
+                // Ïù¥ÎØ∏ ÏÑ†ÌÉùÎêú Î≥∏Ïù¥ÎùºÎ©¥ Ïù¥Î≤§Ìä∏Î•º ÏÜåÎ™®ÌïòÏßÄ ÏïäÍ≥† ÌÜµÍ≥ºÏãúÏºú, Ï§ëÏïôÏùò Ïù¥Îèô Ìï∏Îì§(2Ï∂ï ÌèâÎ©¥ Îì±)Ïù¥ ÌÅ¥Î¶≠ÏùÑ Ï†ïÏÉÅÏ†ÅÏúºÎ°ú Ïù∏ÏãùÌïòÍ≤å Ìï®!
+                if (Selection.activeGameObject != hitObject)
+                {
+                    Selection.activeGameObject = hitObject;
+                    Event.current.Use();
+                    Repaint();
+                }
+            }
+        }
+    }
 
     private void OnGUI()
     {
-        // UI ∞°∑Œ ≈©±‚ ∞Ì¡§
         EditorGUILayout.BeginHorizontal();
         GUILayout.Space((position.width - windowWidth) * 0.5f);
         EditorGUILayout.BeginVertical(GUILayout.Width(windowWidth));
@@ -86,65 +147,53 @@ public class MiniBoneTool : EditorWindow
             ResetUI();
         }
 
-        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUIStyle.none, GUI.skin.verticalScrollbar);
 
         RemoveMissingBones();
-
         DrawLogo();
 
-        GUILayout.Label("  ±‚∫ª º≥¡§", EditorStyles.boldLabel);
+        GUILayout.Label("  Í∏∞Î≥∏ ÏÑ§Ï†ï", EditorStyles.boldLabel);
 
-        if(meshObject == null)
-            SetGUIColor(Color.blue + Color.white);
-
-        meshObject = (GameObject)EditorGUILayout.ObjectField("¥ÎªÛ ø¿∫Í¡ß∆Æ", meshObject, typeof(GameObject), true);
-
+        if (meshObject == null) SetGUIColor(Color.blue + Color.white);
+        meshObject = (GameObject)EditorGUILayout.ObjectField("ÎåÄÏÉÅ Ïò§Î∏åÏ†ùÌä∏", meshObject, typeof(GameObject), true);
         SetGUIColor(Color.white);
 
         if (meshObject != null)
         {
             CheckRootBone();
 
-            DrawButton("Root Bone √ﬂ∞°", CreateRootBone, rootBone == null);
+            DrawButton("Root Bone Ï∂îÍ∞Ä", CreateRootBone, rootBone == null);
 
             if (rootBone != null)
             {
                 bool canLoad = (rootBone.GetComponent<MiniBoneSaveData>() != null);
                 EditorGUI.BeginDisabledGroup(!canLoad);
-                if (GUILayout.Button("¿˙¿Âµ» µ•¿Ã≈Õ ∫“∑Øø¿±‚", GUILayout.Height(25)))
+                if (GUILayout.Button("Ï†ÄÏû•Îêú Îç∞Ïù¥ÌÑ∞ Î∂àÎü¨Ïò§Í∏∞", GUILayout.Height(25)))
                 {
-                    MiniBoneDataManager.LoadBoneData(rootBone, boneObjects);
-
-                    AddGizmoDrawer();
-
-                    ShowGizmo();
-
-                    SceneView.RepaintAll();
+                    RevertToSavedState(false);
                 }
                 EditorGUI.EndDisabledGroup();
 
-                if(boneObjects.Count == 0)
-                        SetGUIColor(Color.blue + Color.white);
-
-                DrawButton("ªı∑ŒøÓ Bone ª˝º∫", () =>
+                if (boneObjects.Count == 0) SetGUIColor(Color.blue + Color.white);
+                DrawButton("ÏÉàÎ°úÏö¥ Bone ÏÉùÏÑ±", () =>
                 {
                     CreateBone();
-
                     AddGizmoDrawer();
                 });
-
                 SetGUIColor(Color.white);
 
                 if (boneObjects.Count > 0)
                 {
-                    GUILayout.Label("  Bone ∏Ò∑œ", EditorStyles.boldLabel);
+                    GUILayout.Label("  Bone Î™©Î°ù", EditorStyles.boldLabel);
 
                     serializedObjectRef.Update();
+
+                    bool disableValues = IsMeshRiggedWithCurrentBones() && !editMode;
 
                     for (int i = 0; i < boneObjects.Count; i++)
                     {
                         EditorGUILayout.BeginVertical("box");
-                        bool removed = DrawBoneDataEditor(boneObjects[i]);
+                        bool removed = DrawBoneDataEditor(boneObjects[i], disableValues);
                         EditorGUILayout.EndVertical();
 
                         if (removed)
@@ -155,109 +204,222 @@ public class MiniBoneTool : EditorWindow
                     }
 
                     serializedObjectRef.ApplyModifiedProperties();
-
-                    EditorGUILayout.Space(5);
-
-                    EditorGUILayout.BeginHorizontal();
-                    if (CheckGizmoComponent() == false)
-                    {
-                        DrawButton("Gizmo ∫∏¿Ã±‚", ShowGizmo);
-                    }
-                    else
-                    {
-                        if (gizmoHidden)
-                        {
-                            DrawButton("Gizmo ∫∏¿Ã±‚", ShowGizmo);
-                        }
-                        else
-                        {
-                            DrawButton("Gizmo º˚±‚±‚", HideGizmo);
-                        }
-                    }
-
-                    if(wireframeMode == true)
-                    {
-                        if (GUILayout.Button("¿œπ› ∏µÂ", GUILayout.Width(175), GUILayout.Height(25)))
-                        {
-                            HideWireframe();
-                        }
-                    }
-                    else
-                    {
-                        if (GUILayout.Button("øÕ¿ÃæÓ «¡∑π¿” ∏µÂ", GUILayout.Width(175), GUILayout.Height(25)))
-                        {
-                            ShowWireframe();
-                        }
-                    }
-
-                    EditorGUILayout.EndHorizontal();
-
-                    DrawButton("¿€æ˜ Ω√¿€", () =>
-                    {
-                        if (meshObject == null || rootBone == null)
-                        {
-                            Debug.LogError("Mesh ø¿∫Í¡ß∆Æ≥™ Root Bone¿Ã º≥¡§µ«¡ˆ æ æ“Ω¿¥œ¥Ÿ.");
-                            return;
-                        }
-
-                        RemoveNonBoneChildren();
-
-                        MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
-
-                        MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
-
-
-                        EditorUtility.DisplayDialog("SystemAlert", "¿€æ˜ øœ∑·!\n\nBone ∏Ò∑œ¿« º≥¡§ ∞™¿Ã\nRoot ø¿∫Í¡ß∆Æø° ¿˙¿Âµ«æ˙Ω¿¥œ¥Ÿ.", "OK");
-                    });
-
-                    SetGUIColor(Color.yellow);
-
-                    DrawButton("ƒƒ∆˜≥Õ∆Æ ¡§∏Æ", FinalAct, CheckGizmoComponent());
-
-                    SetDefaultGUIColor();
                 }
                 else
                 {
                     EditorGUILayout.Space(2);
-
-                    GUILayout.Label("Bone¿∫ Root ø¿∫Í¡ß∆Æ «œ¿ßø° ª˝º∫¿Ã µÀ¥œ¥Ÿ.\n\n- Tip -\n Bone ø¿∫Í¡ß∆Æ¿« ¿⁄Ωƒ¿∏∑Œ ¥Ÿ∏• Bone ø¿∫Í¡ß∆Æ∏¶ √ﬂ∞°«ÿ\n∞Ë√˛ ±∏¡∂∏¶ ±∏º∫«“ ºˆµµ ¿÷Ω¿¥œ¥Ÿ.");
-
+                    GUILayout.Label("BoneÏùÄ Root Ïò§Î∏åÏ†ùÌä∏ ÌïòÏúÑÏóê ÏÉùÏÑ±Ïù¥ Îê©ÎãàÎã§.\n\n- Tip -\n Bone Ïò§Î∏åÏ†ùÌä∏Ïùò ÏûêÏãùÏúºÎ°ú Îã§Î•∏ Bone Ïò§Î∏åÏ†ùÌä∏Î•º Ï∂îÍ∞ÄÌï¥\nÍ≥ÑÏ∏µ Íµ¨Ï°∞Î•º Íµ¨ÏÑ±Ìï† ÏàòÎèÑ ÏûàÏäµÎãàÎã§.");
                 }
-
             }
             else
             {
                 EditorGUILayout.Space(2);
-
-                GUILayout.Label("Root Bone¿ª √ﬂ∞°«œ∏È '¥ÎªÛ ø¿∫Í¡ß∆Æ' «œ¿ßø°\nRoot ø¿∫Í¡ß∆Æ∞° ª˝º∫µÀ¥œ¥Ÿ.");
+                GUILayout.Label("Root BoneÏùÑ Ï∂îÍ∞ÄÌïòÎ©¥ 'ÎåÄÏÉÅ Ïò§Î∏åÏ†ùÌä∏' ÌïòÏúÑÏóê\nRoot Ïò§Î∏åÏ†ùÌä∏Í∞Ä ÏÉùÏÑ±Îê©ÎãàÎã§.");
             }
         }
         else
         {
             EditorGUILayout.Space(2);
-
-            GUILayout.Label("Mesh Renderer π◊ Skind Mesh Renderer ƒƒ∆˜≥Õ∆Æ∏¶\nªÁøÎ«œ¥¬ ø¿∫Í¡ß∆Æ∏¶ ≤¯æÓ¥Ÿ ≥ıΩ¿¥œ¥Ÿ.");
+            GUILayout.Label("Mesh Renderer Î∞è Skind Mesh Renderer Ïª¥Ìè¨ÎÑåÌä∏Î•º\nÏÇ¨Ïö©ÌïòÎäî Ïò§Î∏åÏ†ùÌä∏Î•º ÎÅåÏñ¥Îã§ ÎÜìÏäµÎãàÎã§.");
             EditorGUILayout.Space(1);
-
-            GUILayout.Label("±‚∫ª ªÁøÎ πÊπ˝¿∫ Helper.txtø°º≠ »Æ¿Œ«“ ºˆ ¿÷Ω¿¥œ¥Ÿ.");
-
+            GUILayout.Label("Í∏∞Î≥∏ ÏÇ¨Ïö© Î∞©Î≤ïÏùÄ Helper.txtÏóêÏÑú ÌôïÏù∏Ìï† Ïàò ÏûàÏäµÎãàÎã§.");
         }
 
         EditorGUILayout.EndScrollView();
+
+        if (meshObject != null && rootBone != null && boneObjects.Count > 0)
+        {
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+
+            EditorGUILayout.BeginHorizontal();
+            if (CheckGizmoComponent() == false) DrawButton("Gizmo Î≥¥Ïù¥Í∏∞", ShowGizmo);
+            else
+            {
+                if (gizmoHidden) DrawButton("Gizmo Î≥¥Ïù¥Í∏∞", ShowGizmo);
+                else DrawButton("Gizmo Ïà®Í∏∞Í∏∞", HideGizmo);
+            }
+
+            if (wireframeMode == true)
+            {
+                if (GUILayout.Button("ÏùºÎ∞ò Î™®Îìú", GUILayout.Width(175), GUILayout.Height(25))) HideWireframe();
+            }
+            else
+            {
+                if (GUILayout.Button("ÏôÄÏù¥Ïñ¥ ÌîÑÎ†àÏûÑ Î™®Îìú", GUILayout.Width(175), GUILayout.Height(25))) ShowWireframe();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(5);
+
+            EditorGUILayout.BeginHorizontal();
+            if (editMode)
+            {
+                SetGUIColor(Color.green);
+                if (GUILayout.Button("ÏóêÎîîÌä∏ Î™®Îìú ÏôÑÎ£å (Î¶¨ÍπÖ Ï†ÅÏö©)", GUILayout.Height(35)))
+                {
+                    editMode = false;
+                    ToggleEditMode(false);
+                    EditorUtility.DisplayDialog("SystemAlert", "Î¶¨ÍπÖÏù¥ ÏÑ±Í≥µÏ†ÅÏúºÎ°ú Ï†ÅÏö©ÎêòÏóàÏäµÎãàÎã§.", "OK");
+                }
+                SetDefaultGUIColor();
+
+                if (GUILayout.Button("ÏÑ§Ï†ï Ï¥àÍ∏∞Ìôî", GUILayout.Width(100), GUILayout.Height(35)))
+                {
+                    RevertToSavedState(true);
+                }
+            }
+            else
+            {
+                if (!IsMeshRiggedWithCurrentBones())
+                {
+                    DrawButton("ÏûëÏóÖ ÏãúÏûë (Î¶¨ÍπÖ Ï†ÅÏö©)", () =>
+                    {
+                        if (meshObject == null || rootBone == null) return;
+                        RemoveNonBoneChildren();
+                        SnapshotPositions();
+                        MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
+                        MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
+                        EditorUtility.DisplayDialog("SystemAlert", "ÏûëÏóÖ ÏôÑÎ£å!\n\nÎç∞Ïù¥ÌÑ∞Í∞Ä Ï†ÄÏû•ÎêòÍ≥† Î¶¨ÍπÖÏù¥ Ï†ÅÏö©ÎêòÏóàÏäµÎãàÎã§.", "OK");
+                    });
+                }
+                else
+                {
+                    SetGUIColor(new Color(0.6f, 1f, 0.6f));
+                    if (GUILayout.Button("ÏóêÎîîÌä∏ Î™®Îìú (ÏàòÏ†ï Î∞è Ï∂îÍ∞Ä)", GUILayout.Height(35)))
+                    {
+                        editMode = true;
+                        ToggleEditMode(true);
+                    }
+                    SetDefaultGUIColor();
+
+                    if (GUILayout.Button("ÏÑ§Ï†ï Ï¥àÍ∏∞Ìôî", GUILayout.Width(100), GUILayout.Height(35)))
+                    {
+                        RevertToSavedState(true);
+                    }
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (editMode)
+            {
+                EditorGUILayout.Space(2);
+                EditorGUILayout.HelpBox("ÏóêÎîîÌä∏ Î™®Îìú ÌôúÏÑ±Ìôî Ï§ë:\nÏÉàÎ°úÏö¥ Î≥∏ÏùÑ Ï∂îÍ∞ÄÌïòÍ±∞ÎÇò ÏúÑÏπò, Î≤îÏúÑ ÏÑ§Ï†ïÍ∞íÏùÑ Ïã§ÏãúÍ∞ÑÏúºÎ°ú ÌôïÏù∏ÌïòÏÑ∏Ïöî.\nÏûëÏóÖ ÏôÑÎ£å ÌõÑ [Î¶¨ÍπÖ Ï†ÅÏö©] Î≤ÑÌäºÏùÑ ÎàÑÎ•¥Î©¥ ÏóÖÎç∞Ïù¥Ìä∏ Îê©ÎãàÎã§.", MessageType.Info);
+            }
+
+            EditorGUILayout.Space(2);
+            SetGUIColor(Color.yellow);
+            DrawButton("Ïª¥Ìè¨ÎÑåÌä∏ Ï†ïÎ¶¨", FinalAct, CheckGizmoComponent());
+            SetDefaultGUIColor();
+
+            EditorGUILayout.Space(5);
+        }
+
         EditorGUILayout.EndVertical();
         GUILayout.Space((position.width - windowWidth) * 0.5f);
         EditorGUILayout.EndHorizontal();
     }
 
+    private bool IsMeshRiggedWithCurrentBones()
+    {
+        if (meshObject == null || rootBone == null) return false;
+        var smr = meshObject.GetComponent<SkinnedMeshRenderer>();
+        if (smr == null || smr.sharedMesh == null) return false;
+
+        if (!smr.sharedMesh.name.EndsWith("_Rigged")) return false;
+        if (smr.sharedMesh.boneWeights == null || smr.sharedMesh.boneWeights.Length == 0) return false;
+        if (smr.bones == null || smr.bones.Length != boneObjects.Count + 1) return false;
+
+        return true;
+    }
+
+    private void RevertToSavedState(bool showConfirmDialog)
+    {
+        if (rootBone == null || meshObject == null) return;
+
+        var saveData = rootBone.GetComponent<MiniBoneSaveData>();
+        if (saveData == null || saveData.savedBoneData.Count == 0)
+        {
+            if (showConfirmDialog) EditorUtility.DisplayDialog("ÏïåÎ¶º", "ÏïÑÏßÅ Ï†ÄÏû•(Ï†ÅÏö©)Îêú Î¶¨ÍπÖ Îç∞Ïù¥ÌÑ∞Í∞Ä ÏóÜÏäµÎãàÎã§.", "ÌôïÏù∏");
+            return;
+        }
+
+        if (!showConfirmDialog || EditorUtility.DisplayDialog("ÏÑ§Ï†ï Ï¥àÍ∏∞Ìôî", "ÏúÑÏπò, Î≤îÏúÑ, Í∞ïÎèÑ Îì± Î™®Îì† ÏÑ§Ï†ïÏùÑ ÎßàÏßÄÎßâÏúºÎ°ú Ï†ÅÏö©(Ï†ÄÏû•)ÌñàÎçò ÏÉÅÌÉúÎ°ú ÏôÑÏ†ÑÌûà ÎêòÎèåÎ¶¨ÏãúÍ≤†ÏäµÎãàÍπå?", "ÌôïÏù∏", "Ï∑®ÏÜå"))
+        {
+            GUI.FocusControl(null);
+            MiniBoneDataManager.LoadBoneData(rootBone, boneObjects);
+            RemoveNonBoneChildren();
+
+            if (!editMode)
+            {
+                MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
+                MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
+            }
+            else
+            {
+                ToggleEditMode(true);
+            }
+
+            AddGizmoDrawer();
+            ShowGizmo();
+            SceneView.RepaintAll();
+        }
+    }
+
+    private void SnapshotPositions()
+    {
+        if (boneObjects == null) return;
+
+        foreach (var bd in boneObjects)
+        {
+            if (bd.bone != null)
+            {
+                bd.savedLocalPosition = bd.bone.localPosition;
+                bd.savedLocalRotation = bd.bone.localRotation;
+
+                bd.helperLocalPositions.Clear();
+                bd.helperLocalRotations.Clear();
+
+                foreach (Transform child in bd.bone)
+                {
+                    if (child.name.StartsWith("HelperNode"))
+                    {
+                        bd.helperLocalPositions.Add(child.localPosition);
+                        bd.helperLocalRotations.Add(child.localRotation);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ToggleEditMode(bool enable)
+    {
+        if (meshObject == null || rootBone == null) return;
+        var smr = meshObject.GetComponent<SkinnedMeshRenderer>();
+        if (smr == null || smr.sharedMesh == null) return;
+
+        if (enable)
+        {
+            smr.sharedMesh.boneWeights = new BoneWeight[0];
+            smr.sharedMesh.bindposes = new Matrix4x4[0];
+            smr.bones = new Transform[0];
+        }
+        else
+        {
+            RemoveNonBoneChildren();
+            SnapshotPositions();
+            MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
+            MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
+        }
+    }
+
     void CheckRootBone()
     {
-        if (meshObject == null)
-            return;
-
+        if (meshObject == null) return;
         rootBone = meshObject.transform.Find("Root");
     }
 
-    private bool DrawBoneDataEditor(MiniBoneData boneData)
+    private bool DrawBoneDataEditor(MiniBoneData boneData, bool isDisabled)
     {
         Color slotColor = Color.white;
 
@@ -265,24 +427,31 @@ public class MiniBoneTool : EditorWindow
         {
             if (boneData.bone == Selection.activeGameObject.transform)
                 slotColor = Color.blue + Color.white;
+            else
+            {
+                foreach (Transform child in boneData.bone)
+                {
+                    if (child.gameObject == Selection.activeGameObject) slotColor = Color.blue + Color.white;
+                }
+            }
         }
-
-
 
         bool removed = false;
 
         EditorGUILayout.BeginHorizontal();
 
-        // ªˆªÛ «•Ω√ ƒ≠
         Rect colorRect = GUILayoutUtility.GetRect(18, 18);
         EditorGUI.DrawRect(colorRect, boneData.color);
 
+        if (GUI.Button(colorRect, new GUIContent("", "ÌÅ¥Î¶≠ Ïãú ÏÉâÏÉÅÏù¥ ÎûúÎç§ÏúºÎ°ú Î≥ÄÍ≤ΩÎê©ÎãàÎã§."), GUIStyle.none))
+        {
+            boneData.color = Random.ColorHSV(0f, 1f, 1f, 1f, 0.8f, 1f);
+            SceneView.RepaintAll();
+        }
+
         SetGUIColor(slotColor);
+        GUILayout.Label("Bone Ïù¥Î¶Ñ", GUILayout.Width(80));
 
-        // ∂Û∫ß ≈©±‚ ¡∂¡§
-        GUILayout.Label("Bone ¿Ã∏ß", GUILayout.Width(80)); // ø©±‚º≠ 100¿ª ø¯«œ¥¬ ≈©±‚∑Œ ∫Ø∞Ê
-
-        // ObjectField
         Transform newBone = (Transform)EditorGUILayout.ObjectField(
             boneData.bone,
             typeof(Transform),
@@ -292,26 +461,19 @@ public class MiniBoneTool : EditorWindow
 
         SetDefaultGUIColor();
 
-        if (GUILayout.Button("º±≈√", GUILayout.Width(60)))
+        if (GUILayout.Button("ÏÑ†ÌÉù", GUILayout.Width(60)))
         {
-            if (boneData.bone != null)
-            {
-                Selection.activeObject = boneData.bone.gameObject;
-            }
+            if (boneData.bone != null) Selection.activeObject = boneData.bone.gameObject;
         }
 
-        if (GUILayout.Button("ªË¡¶", GUILayout.Width(50)))
+        if (GUILayout.Button("ÏÇ≠Ï†ú", GUILayout.Width(50)))
         {
-            if (EditorUtility.DisplayDialog("∫ª ¡¶∞≈", "¡§∏ª ¡¶∞≈«œΩ√∞⁄Ω¿¥œ±Ó?", "»Æ¿Œ", "√Îº“"))
+            if (EditorUtility.DisplayDialog("Î≥∏ Ï†úÍ±∞", "Ï†ïÎßê Ï†úÍ±∞ÌïòÏãúÍ≤†ÏäµÎãàÍπå?", "ÌôïÏù∏", "Ï∑®ÏÜå"))
             {
-                if (boneData.bone != null)
-                {
-                    DestroyImmediate(boneData.bone.gameObject);
-                }
+                if (boneData.bone != null) DestroyImmediate(boneData.bone.gameObject);
                 removed = true;
             }
         }
-
         EditorGUILayout.EndHorizontal();
         EditorGUILayout.Space(3);
 
@@ -323,32 +485,94 @@ public class MiniBoneTool : EditorWindow
                 Selection.activeObject = newBone.gameObject;
             }
 
-            EditorGUI.BeginChangeCheck();
+            EditorGUI.BeginDisabledGroup(isDisabled);
 
-            float newRadius = EditorGUILayout.FloatField("Widget π¸¿ß", boneData.influenceRadius);
-            float newStrength = EditorGUILayout.FloatField("Widget ∞≠µµ", boneData.influenceStrength);
+            EditorGUI.BeginChangeCheck();
+            float newRadius = EditorGUILayout.FloatField("Widget Î≤îÏúÑ", boneData.influenceRadius);
+            float newStrength = EditorGUILayout.FloatField("Widget Í∞ïÎèÑ", boneData.influenceStrength);
+
+            if (boneData.falloffCurve == null) boneData.falloffCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            AnimationCurve newCurve = EditorGUILayout.CurveField("ÏòÅÌñ•Î†• Ïª§Î∏å", boneData.falloffCurve);
 
             if (EditorGUI.EndChangeCheck())
             {
                 boneData.influenceRadius = newRadius;
                 boneData.influenceStrength = newStrength;
-
+                boneData.falloffCurve = newCurve;
                 SceneView.RepaintAll();
             }
+
+            EditorGUILayout.Space(2);
+
+            boneData.showHelperUI = EditorGUILayout.Foldout(boneData.showHelperUI, "üîπ Helper Node ÏÑ§Ï†ï", true, EditorStyles.foldoutHeader);
+
+            if (boneData.showHelperUI)
+            {
+                EditorGUILayout.BeginVertical("helpbox");
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Label("  Node Í¥ÄÎ¶¨", GUILayout.Width(100));
+                if (GUILayout.Button("ÏÉùÏÑ±", GUILayout.Width(50)))
+                {
+                    CreateHelperNode(boneData);
+                }
+                if (GUILayout.Button("Ï¥àÍ∏∞Ìôî", GUILayout.Width(50)))
+                {
+                    RemoveHelperNodes(boneData);
+                }
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUI.BeginChangeCheck();
+                float newHRad = EditorGUILayout.FloatField(" ‚îî Î≤îÏúÑ (Radius)", boneData.helperRadius);
+                float newHStr = EditorGUILayout.FloatField(" ‚îî Í∞ïÎèÑ (Strength)", boneData.helperStrength);
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    boneData.helperRadius = newHRad;
+                    boneData.helperStrength = newHStr;
+                    SceneView.RepaintAll();
+                }
+                EditorGUILayout.EndVertical();
+            }
+
+            EditorGUI.EndDisabledGroup();
         }
 
         SetDefaultGUIColor();
-
         return removed;
+    }
+
+    private void CreateHelperNode(MiniBoneData boneData)
+    {
+        if (boneData.bone == null) return;
+
+        int count = 0;
+        foreach (Transform child in boneData.bone)
+        {
+            if (child.name.StartsWith("HelperNode")) count++;
+        }
+
+        GameObject helper = new GameObject($"HelperNode_{count + 1:D2}");
+        helper.transform.parent = boneData.bone;
+        helper.transform.localPosition = Vector3.zero;
+        Selection.activeGameObject = helper;
+        SceneView.RepaintAll();
+    }
+
+    private void RemoveHelperNodes(MiniBoneData boneData)
+    {
+        if (boneData.bone == null) return;
+        List<GameObject> toDestroy = new List<GameObject>();
+        foreach (Transform child in boneData.bone)
+        {
+            if (child.name.StartsWith("HelperNode")) toDestroy.Add(child.gameObject);
+        }
+        foreach (var go in toDestroy) DestroyImmediate(go);
+        SceneView.RepaintAll();
     }
 
     private void CreateRootBone()
     {
-        if (meshObject == null)
-        {
-            Debug.LogError("Mesh ø¿∫Í¡ß∆Æ∏¶ ∏’¿˙ º≥¡§«ÿ¡÷ººø‰.");
-            return;
-        }
+        if (meshObject == null) return;
 
         rootBone = new GameObject("Root")
         {
@@ -361,22 +585,15 @@ public class MiniBoneTool : EditorWindow
         }.transform;
 
         rootBone.transform.parent = meshObject.transform;
-
         Selection.activeObject = rootBone.gameObject;
-
-        Debug.Log("Root Bone¿Ã ª˝º∫µ«æ˙Ω¿¥œ¥Ÿ.");
+        Debug.Log("Root BoneÏù¥ ÏÉùÏÑ±ÎêòÏóàÏäµÎãàÎã§.");
     }
 
     private void CreateBone()
     {
-        if (rootBone == null)
-        {
-            Debug.LogError("Root Bone¿Ã º≥¡§µ«¡ˆ æ æ“Ω¿¥œ¥Ÿ.");
-            return;
-        }
+        if (rootBone == null) return;
 
         int maxIndex = GetMaxBoneIndex(rootBone);
-
         int nextIndex = maxIndex + 1;
         string boneName = $"Bone_{nextIndex:D3}";
 
@@ -388,21 +605,26 @@ public class MiniBoneTool : EditorWindow
                 localPosition = Vector3.zero
             }
         };
-        Debug.Log($"{boneName}¿Ã ª˝º∫µ«æ˙Ω¿¥œ¥Ÿ.");
 
         boneObjects.Add(new MiniBoneData
         {
             bone = newBone.transform,
-            color = Random.ColorHSV(0f, 1f, 1f, 1f, 0.8f, 1f)
+            color = Random.ColorHSV(0f, 1f, 1f, 1f, 0.8f, 1f),
+            falloffCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f)
         });
 
         Selection.activeObject = newBone.gameObject;
+
+        if (!editMode)
+        {
+            editMode = true;
+            ToggleEditMode(true);
+        }
     }
 
     private int GetMaxBoneIndex(Transform parent)
     {
         int maxIndex = 0;
-
         foreach (Transform child in parent)
         {
             if (child.name.StartsWith("Bone_"))
@@ -410,16 +632,11 @@ public class MiniBoneTool : EditorWindow
                 string numberStr = child.name.Substring(5);
                 if (int.TryParse(numberStr, out int existingIndex))
                 {
-                    if (existingIndex > maxIndex)
-                    {
-                        maxIndex = existingIndex;
-                    }
+                    if (existingIndex > maxIndex) maxIndex = existingIndex;
                 }
             }
-
             maxIndex = Mathf.Max(maxIndex, GetMaxBoneIndex(child));
         }
-
         return maxIndex;
     }
 
@@ -431,63 +648,39 @@ public class MiniBoneTool : EditorWindow
     private void RemoveNonBoneRecursive(Transform parent)
     {
         List<Transform> toRemove = new List<Transform>();
-
         foreach (Transform child in parent)
         {
             bool isBone = false;
-
             foreach (var bd in boneObjects)
             {
-                if (bd.bone == child)
+                if (bd.bone == child || child.name.StartsWith("HelperNode"))
                 {
                     isBone = true;
                     break;
                 }
             }
-
-            if (!isBone)
-            {
-                toRemove.Add(child);
-            }
-            else
-            {
-                RemoveNonBoneRecursive(child);
-            }
+            if (!isBone) toRemove.Add(child);
+            else RemoveNonBoneRecursive(child);
         }
 
-        foreach (var child in toRemove)
-        {
-            Debug.LogWarning($"'{child.name}'¿∫(¥¬) ∫ª¿Ã æ∆¥œπ«∑Œ ªË¡¶µÀ¥œ¥Ÿ.");
-            DestroyImmediate(child.gameObject);
-        }
+        foreach (var child in toRemove) DestroyImmediate(child.gameObject);
     }
 
     private void FinalAct()
     {
         RemoveGizmoDrawer();
-        /*
-        rootBone = null;
-        meshObject = null;
-        ResetUI();
-        */
     }
 
     bool CheckGizmoComponent()
     {
-        MiniBoneGizmoDrawer component = meshObject.GetComponent<MiniBoneGizmoDrawer>();
-
-        if (component == null)
-            return false;
-
-        else
-            return true;
+        return meshObject.GetComponent<MiniBoneGizmoDrawer>() != null;
     }
 
     private void ResetUI()
     {
         rootBone = null;
         boneObjects.Clear();
-        
+        editMode = false;
         RemoveGizmoDrawer();
     }
 
@@ -495,20 +688,14 @@ public class MiniBoneTool : EditorWindow
     {
         for (int i = boneObjects.Count - 1; i >= 0; i--)
         {
-            if (boneObjects[i].bone == null)
-            {
-                boneObjects.RemoveAt(i);
-            }
+            if (boneObjects[i].bone == null) boneObjects.RemoveAt(i);
         }
     }
-
 
     private void AddGizmoDrawer()
     {
         if (meshObject == null) return;
-
-        var drawer = meshObject.GetComponent<MiniBoneGizmoDrawer>()
-                     ?? meshObject.AddComponent<MiniBoneGizmoDrawer>();
+        var drawer = meshObject.GetComponent<MiniBoneGizmoDrawer>() ?? meshObject.AddComponent<MiniBoneGizmoDrawer>();
         drawer.boneObjects = boneObjects;
         drawer.gizmoSize = gizmoSize;
     }
@@ -528,7 +715,6 @@ public class MiniBoneTool : EditorWindow
             float size = 0.35f;
             int width = 1024;
             int height = 256;
-
             GUILayout.Label(logoTexture, GUILayout.Width(width * size), GUILayout.Height(height * size));
         }
         GUILayout.FlexibleSpace();
@@ -540,24 +726,15 @@ public class MiniBoneTool : EditorWindow
         string scriptPath = AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(this));
         string directoryPath = System.IO.Path.GetDirectoryName(scriptPath);
         string texturePath = Path.Combine(directoryPath, "Img/Simple_Rig_Logo.psd");
-
         logoTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
-        if (logoTexture == null)
-        {
-            Debug.LogWarning($"∑Œ∞Ì ¿ÃπÃ¡ˆ∏¶ √£¿ª ºˆ æ¯Ω¿¥œ¥Ÿ. ∞Ê∑Œ: {texturePath}");
-        }
     }
 
     private void DrawButton(string label, System.Action action, bool condition = true)
     {
         EditorGUI.BeginDisabledGroup(!condition);
-        if (GUILayout.Button(label, GUILayout.Height(25)))
-        {
-            action();
-        }
+        if (GUILayout.Button(label, GUILayout.Height(25))) action();
         EditorGUI.EndDisabledGroup();
     }
-
 
     private void HideGizmo()
     {
@@ -569,53 +746,32 @@ public class MiniBoneTool : EditorWindow
     void ShowWireframe()
     {
         SceneView sceneView = SceneView.lastActiveSceneView;
-
-        if (sceneView != null)
-            sceneView.cameraMode = SceneView.GetBuiltinCameraMode(DrawCameraMode.Wireframe);
-
+        if (sceneView != null) sceneView.cameraMode = SceneView.GetBuiltinCameraMode(DrawCameraMode.Wireframe);
         wireframeMode = true;
     }
 
     void HideWireframe()
     {
         SceneView sceneView = SceneView.lastActiveSceneView;
-
-        if(sceneView != null)
-            sceneView.cameraMode = SceneView.GetBuiltinCameraMode(DrawCameraMode.Textured);
-
+        if (sceneView != null) sceneView.cameraMode = SceneView.GetBuiltinCameraMode(DrawCameraMode.Textured);
         wireframeMode = false;
     }
 
     private void ShowGizmo()
     {
-        if(CheckGizmoComponent() == false)
-        {
-            AddGizmoDrawer();
-        }
-
+        if (CheckGizmoComponent() == false) AddGizmoDrawer();
         gizmoSize = 2;
         gizmoHidden = false;
         UpdateGizmoDrawer();
     }
 
-
     private void UpdateGizmoDrawer()
     {
         var drawer = meshObject.GetComponent<MiniBoneGizmoDrawer>();
-        if (drawer != null)
-        {
-            drawer.gizmoSize = gizmoSize;
-        }
+        if (drawer != null) drawer.gizmoSize = gizmoSize;
         SceneView.RepaintAll();
     }
 
-    public void SetGUIColor(Color Sender)
-    {
-        GUI.color = Sender;
-    }
-
-    public void SetDefaultGUIColor()
-    {
-        GUI.color = Color.white;
-    }
+    public void SetGUIColor(Color Sender) { GUI.color = Sender; }
+    public void SetDefaultGUIColor() { GUI.color = Color.white; }
 }

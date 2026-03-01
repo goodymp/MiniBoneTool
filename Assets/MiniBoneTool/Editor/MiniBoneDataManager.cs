@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 using UnityEngine;
 
 public static class MiniBoneDataManager
@@ -11,59 +10,61 @@ public static class MiniBoneDataManager
         var saveData = rootBone.GetComponent<MiniBoneSaveData>();
         if (saveData == null)
         {
-            Debug.LogWarning("RootBone에 RiggingSaveData가 없습니다. 불러오기 불가");
+            Debug.LogWarning("RootBone에 MiniBoneSaveData가 없습니다. 불러오기 불가");
             return;
         }
 
         boneObjects.Clear();
 
-        string pattern = @"BoneName\s*=\s*(.*?),\s*Radius\s*=\s*(.*?),\s*Strength\s*=\s*(.*?),\s*Position\s*=\s*(.*)";
-        Regex regex = new Regex(pattern);
-
-        foreach (var line in saveData.boneInfoList)
+        if (saveData.savedBoneData != null)
         {
-            var match = regex.Match(line);
-            if (!match.Success)
+            foreach (var data in saveData.savedBoneData)
             {
-                Debug.LogWarning($"파싱 실패: {line}");
-                continue;
+                if (data.bone == null) continue;
+
+                var newData = new MiniBoneData
+                {
+                    bone = data.bone,
+                    influenceRadius = data.influenceRadius,
+                    influenceStrength = data.influenceStrength,
+                    color = data.color,
+                    falloffCurve = data.falloffCurve != null ? new AnimationCurve(data.falloffCurve.keys) : AnimationCurve.EaseInOut(0f, 0f, 1f, 1f),
+                    helperRadius = data.helperRadius,
+                    helperStrength = data.helperStrength,
+                    showHelperUI = data.showHelperUI,
+                    savedLocalPosition = data.savedLocalPosition,
+                    savedLocalRotation = data.savedLocalRotation,
+                    helperLocalPositions = data.helperLocalPositions != null ? new List<Vector3>(data.helperLocalPositions) : new List<Vector3>(),
+                    helperLocalRotations = data.helperLocalRotations != null ? new List<Quaternion>(data.helperLocalRotations) : new List<Quaternion>()
+                };
+                boneObjects.Add(newData);
+
+                // --- 1. 본 위치 복구 ---
+                newData.bone.localPosition = newData.savedLocalPosition;
+                newData.bone.localRotation = newData.savedLocalRotation;
+
+                // --- 2. 헬퍼 노드 완벽 복구 (기존 것 삭제 후 저장된 스냅샷으로 재생성) ---
+                List<GameObject> oldHelpers = new List<GameObject>();
+                foreach (Transform child in newData.bone)
+                {
+                    if (child.name.StartsWith("HelperNode"))
+                    {
+                        oldHelpers.Add(child.gameObject);
+                    }
+                }
+                foreach (var go in oldHelpers)
+                {
+                    Object.DestroyImmediate(go);
+                }
+
+                for (int h = 0; h < newData.helperLocalPositions.Count; h++)
+                {
+                    GameObject helper = new GameObject($"HelperNode_{h + 1:D2}");
+                    helper.transform.parent = newData.bone;
+                    helper.transform.localPosition = newData.helperLocalPositions[h];
+                    helper.transform.localRotation = newData.helperLocalRotations[h];
+                }
             }
-
-            string boneName = match.Groups[1].Value.Trim();
-            string radiusStr = match.Groups[2].Value.Trim();
-            string strengthStr = match.Groups[3].Value.Trim();
-            string posStr = match.Groups[4].Value.Trim();
-
-            float.TryParse(radiusStr, out float radius);
-            float.TryParse(strengthStr, out float strength);
-
-            Vector3 localPos = Vector3.zero;
-            var posArr = posStr.Split(',');
-            if (posArr.Length == 3)
-            {
-                float.TryParse(posArr[0], out localPos.x);
-                float.TryParse(posArr[1], out localPos.y);
-                float.TryParse(posArr[2], out localPos.z);
-            }
-
-            Transform foundTransform = FindDeepChild(rootBone, boneName);
-            if (foundTransform == null)
-            {
-                Debug.LogWarning($"'{boneName}'을(를) RootBone 자식에서 찾을 수 없습니다.");
-                continue;
-            }
-
-            var newBoneData = new MiniBoneData
-            {
-                bone = foundTransform,
-                influenceRadius = radius,
-                influenceStrength = strength,
-                color = Random.ColorHSV(0f, 1f, 1f, 1f, 0.8f, 1f)
-            };
-            boneObjects.Add(newBoneData);
-
-            // 실제 위치 적용
-            foundTransform.localPosition = localPos;
         }
 
         Debug.Log($"본 설정값 불러오기 완료! 총 {boneObjects.Count}개 적용됨.");
@@ -79,31 +80,33 @@ public static class MiniBoneDataManager
             saveData = rootBone.gameObject.AddComponent<MiniBoneSaveData>();
         }
 
-        saveData.boneInfoList.Clear();
+        saveData.savedBoneData.Clear();
+
         foreach (var bd in boneObjects)
         {
             if (bd.bone == null) continue;
 
-            string boneName = bd.bone.name;
-            float radius = bd.influenceRadius;
-            float strength = bd.influenceStrength;
-            Vector3 pos = bd.bone.localPosition;
-
-            string infoStr = $"BoneName={boneName}, Radius={radius}, Strength={strength}, Position={pos.x},{pos.y},{pos.z}";
-            saveData.boneInfoList.Add(infoStr);
+            saveData.savedBoneData.Add(new MiniBoneData
+            {
+                bone = bd.bone,
+                influenceRadius = bd.influenceRadius,
+                influenceStrength = bd.influenceStrength,
+                color = bd.color,
+                falloffCurve = bd.falloffCurve != null ? new AnimationCurve(bd.falloffCurve.keys) : new AnimationCurve(),
+                helperRadius = bd.helperRadius,
+                helperStrength = bd.helperStrength,
+                showHelperUI = bd.showHelperUI,
+                savedLocalPosition = bd.savedLocalPosition,
+                savedLocalRotation = bd.savedLocalRotation,
+                helperLocalPositions = new List<Vector3>(bd.helperLocalPositions),
+                helperLocalRotations = new List<Quaternion>(bd.helperLocalRotations)
+            });
         }
 
-        Debug.Log($"총 {boneObjects.Count}개의 Bone 정보가 RootBone에 저장되었습니다. (위치 포함)");
-    }
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.SetDirty(saveData);
+#endif
 
-    private static Transform FindDeepChild(Transform parent, string childName)
-    {
-        foreach (Transform child in parent)
-        {
-            if (child.name == childName) return child;
-            var result = FindDeepChild(child, childName);
-            if (result != null) return result;
-        }
-        return null;
+        Debug.Log($"총 {boneObjects.Count}개의 Bone 정보가 RootBone에 저장되었습니다. (위치 스냅샷 포함)");
     }
 }

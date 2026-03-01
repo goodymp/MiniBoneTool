@@ -7,11 +7,11 @@ using UnityEngine;
 public class MiniBoneSaveData : MonoBehaviour
 {
 #if UNITY_EDITOR
-    public List<string> boneInfoList = new List<string>();
+    // 커브 데이터를 안전하게 저장하기 위해 구조체를 통째로 저장
+    public List<MiniBoneData> savedBoneData = new List<MiniBoneData>();
 
     private void Awake()
     {
-        // 에디터에서만 동작하도록
         if (!Application.isEditor)
             return;
 

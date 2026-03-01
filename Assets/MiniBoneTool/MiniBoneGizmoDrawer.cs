@@ -2,98 +2,209 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-
-
 public class MiniBoneGizmoDrawer : MonoBehaviour
 {
     public List<MiniBoneData> boneObjects;
 
-    [HideInInspector]
-    public float gizmoSize = 2.0f; // 기본값 변경
+    [HideInInspector] public float gizmoSize = 2.0f;
+    [HideInInspector] public float boneSize = 2.0f;
 
-    [HideInInspector]
-    public float boneSize = 2.0f;
+    private Mesh bakedMesh;
 
     private void OnDrawGizmos()
     {
-        if (boneObjects == null || boneObjects.Count == 0)
-            return;
+        if (boneObjects == null || boneObjects.Count == 0) return;
 
-        var skinnedMeshRenderer = GetComponent<SkinnedMeshRenderer>();
-        if (skinnedMeshRenderer == null)
+        Mesh originalMesh = null;
+        var smr = GetComponent<SkinnedMeshRenderer>();
+        bool isRigged = false;
+
+        if (smr != null)
         {
-            ConvertToSkinnedMeshRenderer();
-            skinnedMeshRenderer = GetComponent<SkinnedMeshRenderer>();
+            originalMesh = smr.sharedMesh;
+            if (originalMesh != null && originalMesh.boneWeights != null && originalMesh.boneWeights.Length > 0)
+            {
+                isRigged = true;
+            }
+        }
+        else
+        {
+            var mf = GetComponent<MeshFilter>();
+            if (mf != null) originalMesh = mf.sharedMesh;
         }
 
-        Mesh mesh = skinnedMeshRenderer?.sharedMesh;
-        if (mesh == null)
-            return;
+        if (originalMesh == null) return;
 
-        Vector3[] vertices = mesh.vertices;
+        Vector3[] drawVertices = originalMesh.vertices;
+
+        if (isRigged)
+        {
+            if (bakedMesh == null) bakedMesh = new Mesh();
+            smr.BakeMesh(bakedMesh);
+            drawVertices = bakedMesh.vertices;
+        }
+
         Camera sceneCamera = Camera.current;
         if (sceneCamera == null) return;
 
-        foreach (var boneData in boneObjects)
+        GameObject selectedTarget = Selection.activeGameObject;
+
+        int[] boneIndices = new int[boneObjects.Count];
+        if (isRigged)
         {
-            if (boneData.bone == null)
-                continue;
-
-            Vector3 bonePosition = boneData.bone.position;
-            float distanceToCamera = Vector3.Distance(sceneCamera.transform.position, bonePosition);
-            float adjustedGizmoSize = gizmoSize * (distanceToCamera / 10f); // 거리 기반 크기 조정
-            float adjustedBoneSize = boneSize * (distanceToCamera / 10f); // 거리 기반 크기 조정
-
-            for (int i = 0; i < vertices.Length; i++)
+            for (int j = 0; j < boneObjects.Count; j++)
             {
-                Vector3 worldVertex = transform.TransformPoint(vertices[i]);
-                float distance = Vector3.Distance(worldVertex, bonePosition);
+                boneIndices[j] = System.Array.IndexOf(smr.bones, boneObjects[j].bone);
+            }
+        }
 
-                if (distance <= boneData.influenceRadius)
+        // --- [렌더링 순서 1] 빽빽한 버텍스 구슬들을 '먼저' 그려서 배경에 깝니다 ---
+        for (int i = 0; i < originalMesh.vertices.Length; i++)
+        {
+            Vector3 worldVertex = transform.TransformPoint(drawVertices[i]);
+
+            if (isRigged)
+            {
+                BoneWeight bw = originalMesh.boneWeights[i];
+
+                for (int j = 0; j < boneObjects.Count; j++)
                 {
-                    float weight = Mathf.Clamp01(boneData.influenceStrength * (1.0f - (distance / boneData.influenceRadius)));
-                    Gizmos.color = boneData.color * new Color(1f, 1f, 1f, weight); // 본 컬러와 투명도 적용
-                    Gizmos.DrawSphere(worldVertex, adjustedGizmoSize * weight * 0.1f); // Weight에 따라 크기 조정
+                    int bIndex = boneIndices[j];
+                    if (bIndex == -1) continue;
+
+                    float finalWeight = 0f;
+                    if (bw.boneIndex0 == bIndex) finalWeight += bw.weight0;
+                    if (bw.boneIndex1 == bIndex) finalWeight += bw.weight1;
+                    if (bw.boneIndex2 == bIndex) finalWeight += bw.weight2;
+                    if (bw.boneIndex3 == bIndex) finalWeight += bw.weight3;
+
+                    if (finalWeight > 0.001f)
+                    {
+                        DrawGizmoSphere(worldVertex, boneObjects[j], finalWeight, selectedTarget, sceneCamera);
+                    }
                 }
             }
+            else
+            {
+                Vector3 originalWorldVertex = transform.TransformPoint(originalMesh.vertices[i]);
 
-            // Bone 위치 표시
-            Gizmos.color = Color.white; // 본은 항상 흰색으로 표시
-            Gizmos.DrawCube(bonePosition, Vector3.one * (adjustedBoneSize * 0.1f)); // 큐브 크기 조정
+                float[] rawWeights = new float[boneObjects.Count];
+                float maxRaw = 0f;
 
-            // Bone 간 연결선
+                for (int j = 0; j < boneObjects.Count; j++)
+                {
+                    var bd = boneObjects[j];
+                    if (bd.bone == null) continue;
+
+                    float totalBoneWeight = 0f;
+
+                    float dist = Vector3.Distance(originalWorldVertex, bd.bone.position);
+                    if (dist <= bd.influenceRadius)
+                    {
+                        float t = dist / bd.influenceRadius;
+                        float evalX = 1.0f - t;
+                        float falloff = bd.falloffCurve != null ? bd.falloffCurve.Evaluate(evalX) : 1.0f;
+                        totalBoneWeight += falloff * bd.influenceStrength;
+                    }
+
+                    foreach (Transform child in bd.bone)
+                    {
+                        if (child.name.StartsWith("HelperNode"))
+                        {
+                            float hDist = Vector3.Distance(originalWorldVertex, child.position);
+                            if (hDist <= bd.helperRadius)
+                            {
+                                float ht = hDist / bd.helperRadius;
+                                float hEvalX = 1.0f - ht;
+                                float hFalloff = bd.falloffCurve != null ? bd.falloffCurve.Evaluate(hEvalX) : 1.0f;
+                                totalBoneWeight += hFalloff * bd.helperStrength;
+                            }
+                        }
+                    }
+
+                    rawWeights[j] = totalBoneWeight;
+                    if (rawWeights[j] > maxRaw) maxRaw = rawWeights[j];
+                }
+
+                float excess = Mathf.Max(0f, maxRaw - 1.0f);
+                float sum = 0f;
+
+                for (int j = 0; j < boneObjects.Count; j++)
+                {
+                    if (rawWeights[j] > 0f)
+                    {
+                        rawWeights[j] = Mathf.Max(0f, rawWeights[j] - excess);
+                        sum += rawWeights[j];
+                    }
+                }
+
+                for (int j = 0; j < boneObjects.Count; j++)
+                {
+                    float w = rawWeights[j];
+                    if (w > 0.001f)
+                    {
+                        float finalWeight = (sum > 1.0f) ? (w / sum) : w;
+                        DrawGizmoSphere(worldVertex, boneObjects[j], finalWeight, selectedTarget, sceneCamera);
+                    }
+                }
+            }
+        }
+
+        // --- [렌더링 순서 2] 본 뼈대, 헬퍼 노드, 연결선을 '가장 나중에' 그려서 최상단에 노출시킵니다 ---
+        foreach (var boneData in boneObjects)
+        {
+            if (boneData.bone == null) continue;
+
+            bool isSelected = (selectedTarget == boneData.bone.gameObject);
+            Vector3 bonePosition = boneData.bone.position;
+            float distCam = Vector3.Distance(sceneCamera.transform.position, bonePosition);
+            float adjBone = boneSize * (distCam / 10f);
+
+            Gizmos.color = isSelected ? Color.yellow : Color.white;
+            Gizmos.DrawCube(bonePosition, Vector3.one * (adjBone * 0.12f));
+
             foreach (Transform child in boneData.bone)
             {
                 if (child != null)
                 {
-                    Gizmos.color = Color.white; // 연결선도 흰색으로 표시
-                    Gizmos.DrawLine(bonePosition, child.position);
+                    if (child.name.StartsWith("HelperNode"))
+                    {
+                        bool isHelperSelected = (selectedTarget == child.gameObject);
+                        Gizmos.color = isHelperSelected ? Color.green : Color.cyan;
+                        Gizmos.DrawWireSphere(child.position, adjBone * 0.08f);
+                    }
+                    else
+                    {
+                        Gizmos.color = new Color(1f, 1f, 1f, 0.5f);
+                        Gizmos.DrawLine(bonePosition, child.position);
+                    }
                 }
             }
         }
     }
 
-    private void ConvertToSkinnedMeshRenderer()
+    private void DrawGizmoSphere(Vector3 worldPos, MiniBoneData bd, float weight, GameObject selectedTarget, Camera sceneCamera)
     {
-        var meshRenderer = GetComponent<MeshRenderer>();
-        var meshFilter = GetComponent<MeshFilter>();
-
-        if (meshRenderer == null || meshFilter == null)
+        bool isSelected = (selectedTarget == bd.bone.gameObject);
+        foreach (Transform child in bd.bone)
         {
-            Debug.LogError("MeshRenderer 또는 MeshFilter가 없습니다.");
-            return;
+            if (child.gameObject == selectedTarget) isSelected = true;
         }
 
-        var originalMaterials = meshRenderer.sharedMaterials;
-        var originalMesh = meshFilter.sharedMesh;
+        Color finalGizmoColor = (weight >= 0.95f) ? Color.yellow : bd.color;
 
-        DestroyImmediate(meshRenderer);
-        DestroyImmediate(meshFilter);
+        if (isSelected)
+        {
+            Color.RGBToHSV(finalGizmoColor, out float H, out float S, out float V);
+            finalGizmoColor = Color.HSVToRGB(H, S * 0.5f, 1.0f);
+        }
 
-        var skinnedMeshRenderer = gameObject.AddComponent<SkinnedMeshRenderer>();
-        skinnedMeshRenderer.sharedMesh = originalMesh;
-        skinnedMeshRenderer.sharedMaterials = originalMaterials;
+        float displayAlpha = Mathf.Lerp(0.3f, 1.0f, weight);
+        float distCam = Vector3.Distance(sceneCamera.transform.position, bd.bone.position);
+        float adjGizmo = gizmoSize * (distCam / 10f);
+        float displaySize = adjGizmo * Mathf.Lerp(0.04f, 0.12f, weight);
 
-        Debug.Log("MeshRenderer가 SkinnedMeshRenderer로 변환되었습니다.");
+        Gizmos.color = new Color(finalGizmoColor.r, finalGizmoColor.g, finalGizmoColor.b, displayAlpha);
+        Gizmos.DrawSphere(worldPos, displaySize);
     }
 }
