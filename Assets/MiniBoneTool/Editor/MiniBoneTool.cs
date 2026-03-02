@@ -20,6 +20,7 @@ public class MiniBoneTool : EditorWindow
     private bool wireframeMode = false;
 
     private bool editMode = false;
+    private bool scrollToBottom = false;
 
     private Vector2 scrollPosition;
     private Texture2D logoTexture;
@@ -39,9 +40,7 @@ public class MiniBoneTool : EditorWindow
     {
         serializedObjectRef = new SerializedObject(this);
         EditorApplication.update += OnEditorUpdate;
-
         SceneView.duringSceneGui += OnSceneGUI;
-
         LoadLogoTexture();
     }
 
@@ -59,6 +58,7 @@ public class MiniBoneTool : EditorWindow
         EditorApplication.update -= OnEditorUpdate;
         HideWireframe();
         RemoveGizmoDrawer();
+        SetHelperNodesActive(false);
     }
 
     private void OnEditorUpdate()
@@ -82,9 +82,8 @@ public class MiniBoneTool : EditorWindow
             Tools.hidden = false;
         }
 
-        if (!editMode || boneObjects == null || boneObjects.Count == 0) return;
+        if (boneObjects == null || boneObjects.Count == 0) return;
 
-        // [핵심 버그 수정] Alt 키를 누르지 않은 순수 좌클릭일 때만 처리
         if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && !Event.current.alt)
         {
             Ray ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
@@ -124,8 +123,6 @@ public class MiniBoneTool : EditorWindow
 
             if (hitObject != null)
             {
-                // [해결 부분] 클릭한 본이 "현재 이미 선택된 본"이 아닐 때만 클릭 이벤트를 소모함.
-                // 이미 선택된 본이라면 이벤트를 소모하지 않고 통과시켜, 중앙의 이동 핸들(2축 평면 등)이 클릭을 정상적으로 인식하게 함!
                 if (Selection.activeGameObject != hitObject)
                 {
                     Selection.activeGameObject = hitObject;
@@ -170,7 +167,7 @@ public class MiniBoneTool : EditorWindow
                 EditorGUI.BeginDisabledGroup(!canLoad);
                 if (GUILayout.Button("저장된 데이터 불러오기", GUILayout.Height(25)))
                 {
-                    RevertToSavedState(false);
+                    RevertToSavedState();
                 }
                 EditorGUI.EndDisabledGroup();
 
@@ -225,31 +222,21 @@ public class MiniBoneTool : EditorWindow
             GUILayout.Label("기본 사용 방법은 Helper.txt에서 확인할 수 있습니다.");
         }
 
+        if (scrollToBottom)
+        {
+            scrollPosition.y = float.MaxValue;
+            if (Event.current.type == EventType.Repaint)
+            {
+                scrollToBottom = false;
+            }
+        }
+
         EditorGUILayout.EndScrollView();
 
         if (meshObject != null && rootBone != null && boneObjects.Count > 0)
         {
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
-
-            EditorGUILayout.BeginHorizontal();
-            if (CheckGizmoComponent() == false) DrawButton("Gizmo 보이기", ShowGizmo);
-            else
-            {
-                if (gizmoHidden) DrawButton("Gizmo 보이기", ShowGizmo);
-                else DrawButton("Gizmo 숨기기", HideGizmo);
-            }
-
-            if (wireframeMode == true)
-            {
-                if (GUILayout.Button("일반 모드", GUILayout.Width(175), GUILayout.Height(25))) HideWireframe();
-            }
-            else
-            {
-                if (GUILayout.Button("와이어 프레임 모드", GUILayout.Width(175), GUILayout.Height(25))) ShowWireframe();
-            }
-            EditorGUILayout.EndHorizontal();
-
             EditorGUILayout.Space(5);
 
             EditorGUILayout.BeginHorizontal();
@@ -266,37 +253,22 @@ public class MiniBoneTool : EditorWindow
 
                 if (GUILayout.Button("설정 초기화", GUILayout.Width(100), GUILayout.Height(35)))
                 {
-                    RevertToSavedState(true);
+                    RevertToSavedState();
                 }
             }
             else
             {
-                if (!IsMeshRiggedWithCurrentBones())
+                SetGUIColor(new Color(0.6f, 1f, 0.6f));
+                if (GUILayout.Button("에디트 모드 (수정 및 추가)", GUILayout.Height(35)))
                 {
-                    DrawButton("작업 시작 (리깅 적용)", () =>
-                    {
-                        if (meshObject == null || rootBone == null) return;
-                        RemoveNonBoneChildren();
-                        SnapshotPositions();
-                        MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
-                        MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
-                        EditorUtility.DisplayDialog("SystemAlert", "작업 완료!\n\n데이터가 저장되고 리깅이 적용되었습니다.", "OK");
-                    });
+                    editMode = true;
+                    ToggleEditMode(true);
                 }
-                else
-                {
-                    SetGUIColor(new Color(0.6f, 1f, 0.6f));
-                    if (GUILayout.Button("에디트 모드 (수정 및 추가)", GUILayout.Height(35)))
-                    {
-                        editMode = true;
-                        ToggleEditMode(true);
-                    }
-                    SetDefaultGUIColor();
+                SetDefaultGUIColor();
 
-                    if (GUILayout.Button("설정 초기화", GUILayout.Width(100), GUILayout.Height(35)))
-                    {
-                        RevertToSavedState(true);
-                    }
+                if (GUILayout.Button("설정 초기화", GUILayout.Width(100), GUILayout.Height(35)))
+                {
+                    RevertToSavedState();
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -320,6 +292,24 @@ public class MiniBoneTool : EditorWindow
         EditorGUILayout.EndHorizontal();
     }
 
+    private void SetHelperNodesActive(bool isActive)
+    {
+        if (boneObjects == null) return;
+        foreach (var bd in boneObjects)
+        {
+            if (bd.bone != null)
+            {
+                foreach (Transform child in bd.bone)
+                {
+                    if (child.name.StartsWith("HelperNode"))
+                    {
+                        child.gameObject.SetActive(isActive);
+                    }
+                }
+            }
+        }
+    }
+
     private bool IsMeshRiggedWithCurrentBones()
     {
         if (meshObject == null || rootBone == null) return false;
@@ -333,37 +323,37 @@ public class MiniBoneTool : EditorWindow
         return true;
     }
 
-    private void RevertToSavedState(bool showConfirmDialog)
+    private void RevertToSavedState()
     {
         if (rootBone == null || meshObject == null) return;
 
         var saveData = rootBone.GetComponent<MiniBoneSaveData>();
         if (saveData == null || saveData.savedBoneData.Count == 0)
         {
-            if (showConfirmDialog) EditorUtility.DisplayDialog("알림", "아직 저장(적용)된 리깅 데이터가 없습니다.", "확인");
+            EditorUtility.DisplayDialog("알림", "아직 저장(적용)된 리깅 데이터가 없습니다.", "확인");
             return;
         }
 
-        if (!showConfirmDialog || EditorUtility.DisplayDialog("설정 초기화", "위치, 범위, 강도 등 모든 설정을 마지막으로 적용(저장)했던 상태로 완전히 되돌리시겠습니까?", "확인", "취소"))
+        GUI.FocusControl(null);
+        MiniBoneDataManager.LoadBoneData(rootBone, boneObjects);
+        RemoveNonBoneChildren();
+
+        if (!editMode)
         {
-            GUI.FocusControl(null);
-            MiniBoneDataManager.LoadBoneData(rootBone, boneObjects);
-            RemoveNonBoneChildren();
+            MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
+            MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
+            SetHelperNodesActive(false);
 
-            if (!editMode)
-            {
-                MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
-                MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
-            }
-            else
-            {
-                ToggleEditMode(true);
-            }
-
-            AddGizmoDrawer();
-            ShowGizmo();
-            SceneView.RepaintAll();
+            // 시각화 상태 오프 확인
+            HideGizmo();
+            HideWireframe();
         }
+        else
+        {
+            ToggleEditMode(true);
+        }
+
+        SceneView.RepaintAll();
     }
 
     private void SnapshotPositions()
@@ -392,17 +382,26 @@ public class MiniBoneTool : EditorWindow
         }
     }
 
+    // --- [개선] 에디트 모드 전환 시 기즈모 및 와이어프레임 자동 설정 ---
     private void ToggleEditMode(bool enable)
     {
         if (meshObject == null || rootBone == null) return;
-        var smr = meshObject.GetComponent<SkinnedMeshRenderer>();
-        if (smr == null || smr.sharedMesh == null) return;
 
         if (enable)
         {
-            smr.sharedMesh.boneWeights = new BoneWeight[0];
-            smr.sharedMesh.bindposes = new Matrix4x4[0];
-            smr.bones = new Transform[0];
+            SetHelperNodesActive(true);
+
+            var smr = meshObject.GetComponent<SkinnedMeshRenderer>();
+            if (smr != null && smr.sharedMesh != null)
+            {
+                smr.sharedMesh.boneWeights = new BoneWeight[0];
+                smr.sharedMesh.bindposes = new Matrix4x4[0];
+                smr.bones = new Transform[0];
+            }
+
+            // 에디트 모드 켜짐 -> 기즈모/와이어프레임 자동 켜기
+            ShowGizmo();
+            ShowWireframe();
         }
         else
         {
@@ -410,6 +409,11 @@ public class MiniBoneTool : EditorWindow
             SnapshotPositions();
             MiniBoneUtility.StartRigging(meshObject, rootBone, boneObjects);
             MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
+            SetHelperNodesActive(false);
+
+            // 에디트 모드 꺼짐 -> 기즈모/와이어프레임 자동 끄기
+            HideGizmo();
+            HideWireframe();
         }
     }
 
@@ -615,6 +619,9 @@ public class MiniBoneTool : EditorWindow
 
         Selection.activeObject = newBone.gameObject;
 
+        scrollToBottom = true;
+        Repaint();
+
         if (!editMode)
         {
             editMode = true;
@@ -669,6 +676,7 @@ public class MiniBoneTool : EditorWindow
     private void FinalAct()
     {
         RemoveGizmoDrawer();
+        SetHelperNodesActive(false);
     }
 
     bool CheckGizmoComponent()
