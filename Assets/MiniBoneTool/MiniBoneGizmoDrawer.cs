@@ -58,7 +58,6 @@ public class MiniBoneGizmoDrawer : MonoBehaviour
             }
         }
 
-        // --- [렌더링 순서 1] 빽빽한 버텍스 구슬들을 '먼저' 그려서 배경에 깝니다 ---
         for (int i = 0; i < originalMesh.vertices.Length; i++)
         {
             Vector3 worldVertex = transform.TransformPoint(drawVertices[i]);
@@ -99,7 +98,7 @@ public class MiniBoneGizmoDrawer : MonoBehaviour
                     float totalBoneWeight = 0f;
 
                     float dist = Vector3.Distance(originalWorldVertex, bd.bone.position);
-                    if (dist <= bd.influenceRadius)
+                    if (dist <= bd.influenceRadius && bd.influenceRadius > 0.0001f)
                     {
                         float t = dist / bd.influenceRadius;
                         float evalX = 1.0f - t;
@@ -111,13 +110,17 @@ public class MiniBoneGizmoDrawer : MonoBehaviour
                     {
                         if (child.name.StartsWith("HelperNode"))
                         {
+                            // [기능 추가] 실시간 미리보기(기즈모)에서도 Scale값을 곱해서 계산
+                            float finalHRadius = bd.helperRadius * Mathf.Abs(child.lossyScale.x);
+                            float finalHStrength = bd.helperStrength * Mathf.Abs(child.lossyScale.y);
+
                             float hDist = Vector3.Distance(originalWorldVertex, child.position);
-                            if (hDist <= bd.helperRadius)
+                            if (hDist <= finalHRadius && finalHRadius > 0.0001f)
                             {
-                                float ht = hDist / bd.helperRadius;
+                                float ht = hDist / finalHRadius;
                                 float hEvalX = 1.0f - ht;
                                 float hFalloff = bd.falloffCurve != null ? bd.falloffCurve.Evaluate(hEvalX) : 1.0f;
-                                totalBoneWeight += hFalloff * bd.helperStrength;
+                                totalBoneWeight += hFalloff * finalHStrength;
                             }
                         }
                     }
@@ -150,7 +153,6 @@ public class MiniBoneGizmoDrawer : MonoBehaviour
             }
         }
 
-        // --- [렌더링 순서 2] 본 뼈대, 헬퍼 노드, 연결선을 '가장 나중에' 그려서 최상단에 노출시킵니다 ---
         foreach (var boneData in boneObjects)
         {
             if (boneData.bone == null) continue;

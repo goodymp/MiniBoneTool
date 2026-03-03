@@ -22,6 +22,8 @@ public class MiniBoneTool : EditorWindow
     private bool editMode = false;
     private bool scrollToBottom = false;
 
+    private Vector2 lastMouseDownPos;
+
     private Vector2 scrollPosition;
     private Texture2D logoTexture;
 
@@ -84,50 +86,104 @@ public class MiniBoneTool : EditorWindow
 
         if (boneObjects == null || boneObjects.Count == 0) return;
 
-        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && !Event.current.alt)
+        Event e = Event.current;
+
+        if (e.type == EventType.MouseDown && e.button == 0 && !e.alt)
         {
-            Ray ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
-            float closestDist = float.MaxValue;
-            GameObject hitObject = null;
-
-            foreach (var bd in boneObjects)
+            lastMouseDownPos = e.mousePosition;
+        }
+        else if (e.type == EventType.MouseUp && e.button == 0 && !e.alt)
+        {
+            if (Vector2.Distance(lastMouseDownPos, e.mousePosition) < 5f)
             {
-                if (bd.bone == null) continue;
+                Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
+                List<GameObject> hitCandidates = new List<GameObject>();
 
-                float distCam = Vector3.Distance(sceneView.camera.transform.position, bd.bone.position);
-                float clickRadius = 0.035f * distCam;
-                float distToRay = Vector3.Cross(ray.direction, bd.bone.position - ray.origin).magnitude;
-
-                if (distToRay < clickRadius && distToRay < closestDist)
+                foreach (var bd in boneObjects)
                 {
-                    closestDist = distToRay;
-                    hitObject = bd.bone.gameObject;
-                }
+                    if (bd.bone == null) continue;
 
-                foreach (Transform child in bd.bone)
-                {
-                    if (child.name.StartsWith("HelperNode"))
+                    float distCam = Vector3.Distance(sceneView.camera.transform.position, bd.bone.position);
+                    float clickRadius = 0.035f * distCam;
+                    float distToRay = Vector3.Cross(ray.direction, bd.bone.position - ray.origin).magnitude;
+
+                    if (distToRay < clickRadius) hitCandidates.Add(bd.bone.gameObject);
+
+                    foreach (Transform child in bd.bone)
                     {
-                        float hDistCam = Vector3.Distance(sceneView.camera.transform.position, child.position);
-                        float hClickRadius = 0.03f * hDistCam;
-                        float hDistToRay = Vector3.Cross(ray.direction, child.position - ray.origin).magnitude;
-
-                        if (hDistToRay < hClickRadius && hDistToRay < closestDist)
+                        if (child.name.StartsWith("HelperNode"))
                         {
-                            closestDist = hDistToRay;
-                            hitObject = child.gameObject;
+                            float hDistCam = Vector3.Distance(sceneView.camera.transform.position, child.position);
+                            float hClickRadius = 0.03f * hDistCam;
+                            float hDistToRay = Vector3.Cross(ray.direction, child.position - ray.origin).magnitude;
+
+                            if (hDistToRay < hClickRadius) hitCandidates.Add(child.gameObject);
                         }
                     }
                 }
-            }
 
-            if (hitObject != null)
-            {
-                if (Selection.activeGameObject != hitObject)
+                if (hitCandidates.Count > 0)
                 {
-                    Selection.activeGameObject = hitObject;
-                    Event.current.Use();
-                    Repaint();
+                    float bestDist = float.MaxValue;
+                    GameObject closestObj = null;
+                    foreach (var hit in hitCandidates)
+                    {
+                        float d = Vector3.Cross(ray.direction, hit.transform.position - ray.origin).magnitude;
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            closestObj = hit;
+                        }
+                    }
+
+                    List<GameObject> overlappingHits = new List<GameObject>();
+                    Vector3 targetPos = closestObj.transform.position;
+                    foreach (var hit in hitCandidates)
+                    {
+                        if (Vector3.Distance(hit.transform.position, targetPos) < 0.001f)
+                        {
+                            overlappingHits.Add(hit);
+                        }
+                    }
+
+                    overlappingHits.Sort((a, b) =>
+                    {
+                        bool aIsHelper = a.name.StartsWith("HelperNode");
+                        bool bIsHelper = b.name.StartsWith("HelperNode");
+                        if (aIsHelper && !bIsHelper) return -1;
+                        if (!aIsHelper && bIsHelper) return 1;
+                        return a.name.CompareTo(b.name);
+                    });
+
+                    GameObject currentSelected = Selection.activeGameObject;
+                    GameObject nextSelection = overlappingHits[0];
+
+                    if (overlappingHits.Contains(currentSelected))
+                    {
+                        if (overlappingHits.Count > 1)
+                        {
+                            int currentIndex = overlappingHits.IndexOf(currentSelected);
+                            int nextIndex = (currentIndex + 1) % overlappingHits.Count;
+                            nextSelection = overlappingHits[nextIndex];
+                        }
+                        else
+                        {
+                            nextSelection = currentSelected;
+                        }
+                    }
+
+                    if (Selection.activeGameObject != nextSelection)
+                    {
+                        Selection.activeGameObject = nextSelection;
+
+                        // [해결] 선택이 변경될 때 피봇(이동 툴 등)의 조작 상태를 완전히 강제 초기화!
+                        // 유니티가 "평면 핸들을 아직 잡고 있다"고 착각하는 것을 방지합니다.
+                        GUIUtility.hotControl = 0;
+                        GUIUtility.keyboardControl = 0;
+
+                        e.Use();
+                        Repaint();
+                    }
                 }
             }
         }
@@ -243,11 +299,10 @@ public class MiniBoneTool : EditorWindow
             if (editMode)
             {
                 SetGUIColor(Color.green);
-                if (GUILayout.Button("에디트 모드 완료 (리깅 적용)", GUILayout.Height(35)))
+                if (GUILayout.Button("작업 모드 종료", GUILayout.Height(35)))
                 {
                     editMode = false;
                     ToggleEditMode(false);
-                    EditorUtility.DisplayDialog("SystemAlert", "리깅이 성공적으로 적용되었습니다.", "OK");
                 }
                 SetDefaultGUIColor();
 
@@ -259,7 +314,7 @@ public class MiniBoneTool : EditorWindow
             else
             {
                 SetGUIColor(new Color(0.6f, 1f, 0.6f));
-                if (GUILayout.Button("에디트 모드 (수정 및 추가)", GUILayout.Height(35)))
+                if (GUILayout.Button("작업 모드", GUILayout.Height(35)))
                 {
                     editMode = true;
                     ToggleEditMode(true);
@@ -276,7 +331,7 @@ public class MiniBoneTool : EditorWindow
             if (editMode)
             {
                 EditorGUILayout.Space(2);
-                EditorGUILayout.HelpBox("에디트 모드 활성화 중:\n새로운 본을 추가하거나 위치, 범위 설정값을 실시간으로 확인하세요.\n작업 완료 후 [리깅 적용] 버튼을 누르면 업데이트 됩니다.", MessageType.Info);
+                EditorGUILayout.HelpBox("작업 모드 활성화 중:\n새로운 본을 추가하거나 위치, 범위 설정값을 실시간으로 확인하세요.\n작업 완료 후 [작업 모드 종료] 버튼을 누르면 업데이트 됩니다.", MessageType.Info);
             }
 
             EditorGUILayout.Space(2);
@@ -330,7 +385,6 @@ public class MiniBoneTool : EditorWindow
         var saveData = rootBone.GetComponent<MiniBoneSaveData>();
         if (saveData == null || saveData.savedBoneData.Count == 0)
         {
-            EditorUtility.DisplayDialog("알림", "아직 저장(적용)된 리깅 데이터가 없습니다.", "확인");
             return;
         }
 
@@ -344,7 +398,6 @@ public class MiniBoneTool : EditorWindow
             MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
             SetHelperNodesActive(false);
 
-            // 시각화 상태 오프 확인
             HideGizmo();
             HideWireframe();
         }
@@ -382,7 +435,6 @@ public class MiniBoneTool : EditorWindow
         }
     }
 
-    // --- [개선] 에디트 모드 전환 시 기즈모 및 와이어프레임 자동 설정 ---
     private void ToggleEditMode(bool enable)
     {
         if (meshObject == null || rootBone == null) return;
@@ -399,7 +451,6 @@ public class MiniBoneTool : EditorWindow
                 smr.bones = new Transform[0];
             }
 
-            // 에디트 모드 켜짐 -> 기즈모/와이어프레임 자동 켜기
             ShowGizmo();
             ShowWireframe();
         }
@@ -411,7 +462,6 @@ public class MiniBoneTool : EditorWindow
             MiniBoneDataManager.SaveBoneData(rootBone, boneObjects);
             SetHelperNodesActive(false);
 
-            // 에디트 모드 꺼짐 -> 기즈모/와이어프레임 자동 끄기
             HideGizmo();
             HideWireframe();
         }
@@ -492,11 +542,11 @@ public class MiniBoneTool : EditorWindow
             EditorGUI.BeginDisabledGroup(isDisabled);
 
             EditorGUI.BeginChangeCheck();
-            float newRadius = EditorGUILayout.FloatField("Widget 범위", boneData.influenceRadius);
-            float newStrength = EditorGUILayout.FloatField("Widget 강도", boneData.influenceStrength);
+            float newRadius = EditorGUILayout.FloatField("영향력 반경 (Radius)", boneData.influenceRadius);
+            float newStrength = EditorGUILayout.FloatField("가중치 강도 (Strength)", boneData.influenceStrength);
 
             if (boneData.falloffCurve == null) boneData.falloffCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
-            AnimationCurve newCurve = EditorGUILayout.CurveField("영향력 커브", boneData.falloffCurve);
+            AnimationCurve newCurve = EditorGUILayout.CurveField("감쇠 커브 (Falloff)", boneData.falloffCurve);
 
             if (EditorGUI.EndChangeCheck())
             {
@@ -526,8 +576,8 @@ public class MiniBoneTool : EditorWindow
                 EditorGUILayout.EndHorizontal();
 
                 EditorGUI.BeginChangeCheck();
-                float newHRad = EditorGUILayout.FloatField(" └ 범위 (Radius)", boneData.helperRadius);
-                float newHStr = EditorGUILayout.FloatField(" └ 강도 (Strength)", boneData.helperStrength);
+                float newHRad = EditorGUILayout.FloatField(" └ 영향력 반경 (Radius)", boneData.helperRadius);
+                float newHStr = EditorGUILayout.FloatField(" └ 가중치 강도 (Strength)", boneData.helperStrength);
 
                 if (EditorGUI.EndChangeCheck())
                 {

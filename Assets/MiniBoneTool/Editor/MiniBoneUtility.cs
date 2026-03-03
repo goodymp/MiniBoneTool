@@ -26,19 +26,16 @@ public static class MiniBoneUtility
             return;
         }
 
-        // [핵심 개선] 메쉬 이름이 _Rigged로 끝난다면 이미 생성된 에셋이므로 무조건 덮어쓰기
         bool isAlreadyOurRiggedMesh = originalMesh.name.EndsWith("_Rigged");
 
         if (isAlreadyOurRiggedMesh)
         {
-            // 새로운 에셋을 만들지 않고 기존 에셋에 가중치 정보만 업데이트
             ConfigureRigging(meshObject, rootBone, boneObjects, renderer, originalMesh);
             EditorUtility.SetDirty(originalMesh);
             AssetDatabase.SaveAssets();
         }
         else
         {
-            // 최초 1회에 한해 _Rigged 복사본 에셋을 생성
             var newMesh = Object.Instantiate(originalMesh);
             newMesh.name = originalMesh.name.Replace("(Clone)", "") + "_Rigged";
 
@@ -140,7 +137,7 @@ public static class MiniBoneUtility
             float totalBoneWeight = 0f;
 
             float dist = Vector3.Distance(worldPosition, boneData.bone.position);
-            if (dist <= boneData.influenceRadius)
+            if (dist <= boneData.influenceRadius && boneData.influenceRadius > 0.0001f)
             {
                 float t = dist / boneData.influenceRadius;
                 float evalX = 1.0f - t;
@@ -152,13 +149,17 @@ public static class MiniBoneUtility
             {
                 if (child.name.StartsWith("HelperNode"))
                 {
+                    // [기능 추가] 헬퍼 노드의 Scale값을 곱해서 최종 반경과 강도를 계산
+                    float finalHRadius = boneData.helperRadius * Mathf.Abs(child.lossyScale.x);
+                    float finalHStrength = boneData.helperStrength * Mathf.Abs(child.lossyScale.y);
+
                     float hDist = Vector3.Distance(worldPosition, child.position);
-                    if (hDist <= boneData.helperRadius)
+                    if (hDist <= finalHRadius && finalHRadius > 0.0001f)
                     {
-                        float ht = hDist / boneData.helperRadius;
+                        float ht = hDist / finalHRadius;
                         float hEvalX = 1.0f - ht;
                         float hFalloff = boneData.falloffCurve != null ? boneData.falloffCurve.Evaluate(hEvalX) : 1.0f;
-                        totalBoneWeight += hFalloff * boneData.helperStrength;
+                        totalBoneWeight += hFalloff * finalHStrength;
                     }
                 }
             }
